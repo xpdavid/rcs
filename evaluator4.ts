@@ -1,5 +1,5 @@
 ///////////////////////
-// evaluator4.ts
+// lazy.ts
 ///////////////////////
 
 
@@ -16,8 +16,8 @@ Functions to handle and evaluate primitive values.
 */
 function is_self_evaluating(stmt) {
     return is_number(stmt) ||
-        is_string(stmt) ||
-        is_boolean(stmt);
+           is_string(stmt) ||
+           is_boolean(stmt);
 }
 
 function is_empty_list_statement(stmt) {
@@ -95,12 +95,16 @@ function define_variable(variable, value, env) {
     return add_binding_to_frame(variable, value, frame);
 }
 
+// ===========================================
+// In this implementation, any variable access forces
+// evaluation of any thunk to which the variable may refer.
+// ===========================================
 function lookup_variable_value(variable, env) {
     function env_loop(env) {
         if (is_empty_environment(env)) {
             error("Unbound variable: " + variable);
         } else if (has_binding_in_frame(variable, first_frame(env))) {
-            return first_frame(env)[variable];
+            return force(first_frame(env)[variable]);
         } else {
             return env_loop(enclosing_environment(env));
         }
@@ -119,6 +123,69 @@ function extend_environment(vars, vals, base_env) {
         error("Too many arguments supplied: " + vars + " " + vals);
     } else {
         error("Too few arguments supplied: " + vars + " " + vals);
+    }
+}
+
+
+/*
+*******************************************************************************
+Functions to handle thunks.
+
+A "thunk" represents a delayed evaluation
+of an expression. It is a tagged data structure
+that contains the expression to be evaluated, and
+the environment to be used in its evaluation.
+*******************************************************************************
+*/
+function is_thunk(x) {
+    return is_tagged_object(x, "thunk");
+}
+
+function make_thunk(expr, env) {
+    return { tag: "thunk",
+             expression: expr,
+             environment: env,
+             has_memoized_value: false,
+             memoized_value: undefined
+           };
+}
+
+function thunk_expression(thunk) {
+    return thunk.expression;
+}
+
+function thunk_environment(thunk) {
+    return thunk.environment;
+}
+
+function thunk_has_memoized_value(thunk) {
+    return thunk.has_memoized_value;
+}
+
+function thunk_memoize(thunk, value) {
+    thunk.has_memoized_value = true;
+    thunk.memoized_value = value;
+}
+
+function thunk_memoized_value(thunk) {
+    return thunk.memoized_value;
+}
+
+// ===========================================
+// The function force "unwraps" delayed evaluations
+// (aka thunks). When it encounters a thunk, the
+// expression contained in the thunk is evaluated
+// with respect to the environment stored in the thunk.
+// The result of this evaluation may itself be a thunk,
+// and thus, force calls itself recursively until the
+// result is not a thunk any longer.
+// ===========================================
+function force(v) {
+    if (is_thunk(v)) {
+        return force(evaluate(thunk_expression(v),
+                              thunk_environment(v)));
+    } else {
+        return v;
     }
 }
 
@@ -175,8 +242,13 @@ function is_false(x) {
     return x === false;
 }
 
+// ===========================================
+// Need to force the evaluation of the 
+// predicate expression, so that it can be
+// tested for true or false.
+// ===========================================
 function evaluate_if_statement(stmt, env) {
-    if (is_true(evaluate(if_predicate(stmt), env))) {
+    if (is_true(force(evaluate(if_predicate(stmt), env)))) {
         return evaluate(if_consequent(stmt), env);
     } else {
         return evaluate(if_alternative(stmt), env);
@@ -216,10 +288,10 @@ Functions to handle function values.
 */
 function make_function_value(parameters, body, env) {
     return { tag: "function_value",
-        parameters: parameters,
-        body: body,
-        environment: env
-    };
+             parameters: parameters,
+             body: body,
+             environment: env
+           };
 }
 
 function is_compound_function_value(f) {
@@ -340,9 +412,20 @@ function primitive_implementation(fun) {
     return fun.implementation;
 }
 
+// ===========================================
+// All primitive functions need to evaluate their arguments.
+// The exception to this rule is "pair" (aka CONS in Scheme).
+// See Friedman, Wise: CONS Should Not Evaluate its Arguments.
+// ===========================================
 function apply_primitive_function(fun, argument_list) {
-    return apply_in_underlying_javascript(primitive_implementation(fun),
-                                          argument_list);
+    if (equal(primitive_implementation(fun), pair)) {
+        return pair(head(argument_list),
+                    head(tail(argument_list)));
+    } else {
+        return apply_in_underlying_javascript(
+                   primitive_implementation(fun),
+                   map(force, argument_list));
+    }
 }
 
 
@@ -393,16 +476,21 @@ function apply(fun, args) {
 When evaluate processes a function application, it uses list_of_values to
 produce the list of arguments to which the function is to be applied. The
 function list_of_values takes as an argument the operands of the
-combination. It evaluates each operand and returns a list of the
-corresponding values.
+combination.
 *******************************************************************************
 */
+// ===========================================
+// In lazy evaluation, argument expressions are 
+// not evaluated, but "wrapped" in a thunk.
+// ===========================================
 function list_of_values(exps, env) {
     if (no_operands(exps)) {
         return [];
     } else {
-        return pair(evaluate(first_operand(exps), env),
-                    list_of_values(rest_operands(exps), env));
+        return pair(make_thunk(
+                      first_operand(exps), env),
+                    list_of_values(
+                      rest_operands(exps), env));
     }
 }
 
@@ -413,33 +501,6 @@ The function evaluate takes as arguments a statement and an environment. It
 classifies the statement and directs its evaluation. Each type of statement
 has a predicate that tests for it and an abstract means for selecting its
 parts.
-
-PRIMITIVE EXPRESSIONS:
-* If the given statement is a self-evaluating expression, such as a number,
-evaluate returns the expression itself.
-* The function evaluate must look up variables in the environment to find
-their values.
-
-SPECIAL FORMS:
-* A definition of a variable must recursively call evaluate to compute the
-new value to be associated with the variable. The environment must be
-modified to change (or create) the binding of the variable.
-* An if statement requires special processing of its parts, so as to
-evaluate the consequent if the predicate is true, and otherwise to evaluate
-the alternative.
-* A function definition must be transformed into an applicable function by
-packaging together the parameters and body specified by the lambda
-expression with the environment of the evaluation.
-* A sequence of statements requires evaluating its component statements in
-the order in which they appear.
-
-COMBINATIONS:
-* For a function application, evaluate must recursively evaluate the
-operator part and the operands of the combination. The resulting function
-and arguments are passed to apply, which handles the actual function
-application.
-* When evaluate encounters a return statement, the return expression is
-evaluated and marked as a return value.
 *******************************************************************************
 */
 function evaluate(stmt, env) {
@@ -458,8 +519,13 @@ function evaluate(stmt, env) {
     } else if (is_sequence(stmt)) {
         return evaluate_sequence(stmt, env);
     } else if (is_application(stmt)) {
+        // ===========================================
+        // Need to force the evaluation of the operator
+        // so that apply function can dispatch on the type 
+        // of the operator (primitive vs. compound).
+        // ===========================================
         return apply(
-            evaluate(operator(stmt), env),
+            force(evaluate(operator(stmt), env)),
             list_of_values(operands(stmt), env));
     } else if (is_return_statement(stmt)) {
         return make_return_value(
@@ -478,25 +544,26 @@ Specify and define the built-in and primitive functions.
 */
 var primitive_functions =
     list(
-//Builtin functions
+        //Builtin functions
         pair("alert", alert),
+        pair("display", display),
         pair("prompt", prompt),
         pair("parseInt", parseInt),
 
-//List library functions
-        pair("pair", pair),
+        //List library functions
         pair("head", head),
         pair("tail", tail),
-        pair("list", list),
-        pair("length", length),
-        pair("map", map),
         pair("is_empty_list", is_empty_list),
+        // "list" can serve as strict alternative to "pair".
+        pair("list", list),
+        // "pair" is non-strict, see apply_primitive_function.
+        pair("pair", pair),
 
-//Intepreter functions
+        //Intepreter functions
         pair("parse", parse),
         pair("error", error),
 
-//Primitive functions
+        //Primitive functions
         pair("+", function(x, y) { return x + y; }),
         pair("-", function(x, y) { return x - y; }),
         pair("*", function(x, y) { return x * y; }),
@@ -542,8 +609,13 @@ function setup_environment() {
 var the_global_environment = setup_environment();
 
 
+// ===========================================
+// The result of overall evaluation may be
+// a thunk. The function evaluate_toplevel
+// forces its evaluation, in that case.
+// ===========================================
 function evaluate_toplevel(stmt, env) {
-    var value = evaluate(stmt, env);
+    var value = force(evaluate(stmt, env));
     if (is_return_value(value)) {
         error("return not allowed outside of function definition");
     } else {
@@ -576,16 +648,98 @@ Testing.
 *******************************************************************************
 */
 
-/* TRY THIS:
+/*
+// ===========================================
+// TEST 1: function definition and application
+// ===========================================
 parse_and_evaluate("
-function append(xs,ys) {
+function f(x) {
+    return x;
+}
+f(1);
+");
+
+
+// ===========================================
+// TEST 2: lists
+// ===========================================
+parse_and_evaluate("
+function append(xs, ys) {
     if (is_empty_list(xs)) {
         return ys;
     } else {
         return pair(head(xs),
-                    append(tail(xs),ys));
+            append(tail(xs), ys));
     }
 }
-append(list(1,2),list(3,4));
+append(list(1, 2),list(3, 4));
 ");
+
+
+// ===========================================
+// TEST 3: infinite lists
+// ===========================================
+parse_and_evaluate("
+var zeros = pair(0, zeros);
+head(tail(tail(tail(tail(zeros)))));
+");
+
+
+// ===========================================
+// TEST 4: memoization
+// ===========================================
+parse_and_evaluate("
+function side_effect(x) {
+    alert('SIDE EFFECT');
+    return x;
+}
+function f(x, y) {
+    x + x + x;
+}
+f(side_effect(1), side_effect(2));
+// SIDE EFFECT should appear exactly once if memoization is used.
+");
+
+
+// ===========================================
+// TEST 5: lazy map
+// ===========================================
+parse_and_evaluate("
+function map(f, xs) {
+    if (is_empty_list(xs)) {
+        return [];
+    } else {
+        return pair(f(head(xs)),
+                    map(f, tail(xs)));
+    }
+}
+var integers = pair(1, map(function(x) { return x + 1; },
+                           integers));
+head(tail(tail(tail(tail(integers)))));
+");
+
+
+// ===========================================
+// TEST 6: another cool lazy example
+// ===========================================
+parse_and_evaluate("
+function add_lists(s1, s2) {
+    if (is_empty_list(s1)) {
+        return s2;
+    } else if (is_empty_list(s2)) {
+        return s1;
+    } else {
+        return pair(head(s1) + head(s2),
+                    add_lists(tail(s1),
+                              tail(s2)));
+    }
+}
+var wat =
+pair(0,
+     pair(1,
+          add_lists(wat, tail(wat))));
+head(tail(tail(tail(tail(tail(wat))))));
+");
+
+// ===========================================
 */
