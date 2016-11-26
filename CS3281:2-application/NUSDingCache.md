@@ -4,7 +4,7 @@
  *
  * @return static
  */
-public static function weekQuestions($page, $itemInPage) {
+public static function getWeeklyQuestions($page, $itemInPage) {
     $question = Cache::remember('week_questions_' . $page . '_' . $itemInPage, 10,
         function() use ($page, $itemInPage) {
         return Question::published()->get()->sortByDesc(
@@ -26,7 +26,7 @@ public static function weekQuestions($page, $itemInPage) {
  *
  * @return static
  */
-public static function monthQuestions($page, $itemInPage) {
+public static function getMonthlyQuestions($page, $itemInPage) {
     $question = Cache::remember('month' . $page . '_' . $itemInPage, 10,
         function() use ($page, $itemInPage) {
         return Question::published()->get()->sortByDesc(
