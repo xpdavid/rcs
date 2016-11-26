@@ -1,3 +1,5 @@
+## JavaScript code
+It aims to use AJAX to get data from server and compiles to HTML code. The JavaScript template engine is used here so that the JS code won't be messy.
 ``` javascript
 /**
  * Show specific bookmark page of questions
@@ -16,12 +18,13 @@ function showBookmarkQuestionPage(base_id, bookmark_id, page, callback) {
         if (!results.data.length) {
             return ;
         }
-        var template = Handlebars.templates['_subscribed_question.html'];
+        var template = Handlebars.templates['_question_bookmark.html'];
         // show question bookmark
         $('#' + base_id + '_content').html(template({
             questions : results.data
         }));
-        // show navbar pagination
+        
+        // show pagination
         $('#' + base_id + '_nav').html(
             compilePageNav(page, results.pages, base_id, 'question', bookmark_id, 'showBookmarkQuestionPage')
         );
@@ -35,7 +38,8 @@ function showBookmarkQuestionPage(base_id, bookmark_id, page, callback) {
 ```
 
 
-
+### HTML Template
+JavaScript template engine (Handlebars) will insert the actual data
 ``` html
 <!--this is the template for bookmark item-->
 <!--the template will rendered by javascript template engine `handlebars.js`-->
